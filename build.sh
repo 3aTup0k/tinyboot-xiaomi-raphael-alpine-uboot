@@ -9,7 +9,7 @@ set -euo pipefail
 
 # ---- CONFIGURATION -----------------------------------------
 KERNEL_VERSION="${KERNEL_VERSION:-7.0}"
-ALPINE_VERSION="${ALPINE_VERSION:-latest-stable}"
+ALPINE_VERSION="${ALPINE_VERSION:-v3.21}"
 OUTPUT="${OUTPUT:-$(pwd)/output}"
 WORKDIR="${WORKDIR:-$(mktemp -d)}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-false}"
@@ -113,12 +113,22 @@ install_qemu_ios() {
 
     # Install QEMU runtime deps
     log "    Installing SDL/runtime libraries..."
-    for pkg in ${QEMU_RUNTIME_PACKAGES}; do
-        /tmp/apk.static --arch "${ALPINE_ARCH}" --root "${ROOTFS}" \
-            --repository "${ALPINE_MAIN}" \
-            --repository "${ALPINE_COMMUNITY}" \
-            add --no-scripts "${pkg}" 2>/dev/null || true
-    done
+    if command -v docker &>/dev/null; then
+        local ALPINE_TAG="${ALPINE_VERSION#v}"
+        docker run --rm -v "${ROOTFS}:/rootfs" "arm64v8/alpine:${ALPINE_TAG}" sh -c "
+            apk add --root=/rootfs \
+                ${QEMU_RUNTIME_PACKAGES} 2>/dev/null || true
+        "
+    elif [ -f /tmp/apk.static ]; then
+        for pkg in ${QEMU_RUNTIME_PACKAGES}; do
+            /tmp/apk.static --arch aarch64 --root "${ROOTFS}" \
+                --repository "${ALPINE_MAIN}" \
+                --repository "${ALPINE_COMMUNITY}" \
+                add "${pkg}" 2>/dev/null || true
+        done
+    else
+        log "    ⚠ Cannot install runtime libs (no Docker or apk.static)"
+    fi
 
     # Create config directory for bootrom/NAND/NOR paths
     mkdir -p "${ROOTFS}/etc/qemu-ios"
@@ -136,77 +146,89 @@ EOF
 
 # ---- STEP 1: Setup directories -----------------------------
 setup_dirs() {
-    log "[1/9] Creating working directories..."
+    log "[setup] Creating working directories..."
     mkdir -p "${ROOTFS}" "${INITRAMFS_DIR}" "${OUTPUT}"
 }
 
-# ---- STEP 2: Download apk-tools-static ----------------------
-download_apk() {
-    log "[2/9] Downloading apk-tools-static (${BUILD_ARCH})..."
+# ---- STEP 3: Build Alpine rootfs ----------------------------
+build_rootfs_docker() {
+    log "[bootstrap] Bootstrapping Alpine Linux rootfs (aarch64) via Docker..."
 
-    # Resolve the latest apk-tools-static version from Alpine APKINDEX
-    ALPINE_MAIN_URL="https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/${BUILD_ARCH}"
-    APKINDEX_URL="${ALPINE_MAIN_URL}/APKINDEX.tar.gz"
+    # Register QEMU binfmt for aarch64 emulation
+    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null || true
 
-    APK_TOOLS_VER=$(curl -fsSL "${APKINDEX_URL}" \
+    local ALPINE_TAG="${ALPINE_VERSION#v}"  # "v3.21" -> "3.21"
+    log "    Using arm64v8/alpine:${ALPINE_TAG}"
+
+    docker run --rm -v "${ROOTFS}:/rootfs" "arm64v8/alpine:${ALPINE_TAG}" sh -c "
+        apk add --root=/rootfs --initdb \
+            ${PACKAGES}
+    "
+
+    log "    ✓ Packages installed: $(echo ${PACKAGES} | wc -w)"
+}
+
+build_rootfs_apk() {
+    log "[bootstrap] Bootstrapping Alpine Linux rootfs (aarch64) via apk.static..."
+
+    # Find apk-tools-static version from Alpine CDN
+    local APK_MAIN="https://dl-cdn.alpinelinux.org/alpine/${ALPINE_VERSION}/main/x86_64"
+    local APKINDEX_URL="${APK_MAIN}/APKINDEX.tar.gz"
+
+    local APK_VER=$(curl -fsSL "${APKINDEX_URL}" \
         | tar -xz -O APKINDEX 2>/dev/null \
         | grep -A10 'P:apk-tools-static' \
         | grep '^V:' | cut -d: -f2 | head -1)
 
-    if [ -z "${APK_TOOLS_VER}" ]; then
-        APK_TOOLS_VER="2.14.6-r0"
-    fi
+    [ -z "${APK_VER}" ] && APK_VER="2.14.6-r0"
 
-    APK_URL="${ALPINE_MAIN_URL}/apk-tools-static-${APK_TOOLS_VER}.apk"
-
-    log "    apk-tools: ${APK_TOOLS_VER}, arch: ${BUILD_ARCH}"
-    curl -fsSL -o /tmp/apk-tools.apk "${APK_URL}"
-
-    # apk is a tar.gz; extract apk.static from it
+    log "    apk-tools-static: ${APK_VER}"
+    curl -fsSL -o /tmp/apk-tools.apk "${APK_MAIN}/apk-tools-static-${APK_VER}.apk"
     mkdir -p /tmp/apk-extract
     tar -xzf /tmp/apk-tools.apk -C /tmp/apk-extract
     cp /tmp/apk-extract/sbin/apk.static /tmp/apk.static
     chmod +x /tmp/apk.static
     rm -rf /tmp/apk-extract /tmp/apk-tools.apk
 
-    log "    ✓ apk.static ready ($(/tmp/apk.static --version 2>&1 | head -1))"
-}
+    APK_VER_STR=$(/tmp/apk.static --version 2>&1 | head -1)
+    log "    ✓ apk.static: ${APK_VER_STR}"
 
-# ---- STEP 3: Build Alpine rootfs ----------------------------
-build_rootfs() {
-    log "[3/9] Bootstrapping Alpine Linux rootfs (aarch64)..."
+    # Reuse global ALPINE_MAIN/ALPINE_COMMUNITY (from config section)
 
-    mkdir -p "${ROOTFS}/etc/apk"
+    /tmp/apk.static --arch aarch64 --root "${ROOTFS}" --initdb add
 
-    # Write repositories
-    cat > "${ROOTFS}/etc/apk/repositories" <<-REPOS
-${ALPINE_MAIN}
-${ALPINE_COMMUNITY}
-REPOS
-
-    # Initialize APK database
-    /tmp/apk.static --arch "${ALPINE_ARCH}" --root "${ROOTFS}" --initdb add --no-scripts
-
-    # Install packages
     for pkg in ${PACKAGES}; do
         log "    Installing: ${pkg}"
-        /tmp/apk.static --arch "${ALPINE_ARCH}" --root "${ROOTFS}" \
+        /tmp/apk.static --arch aarch64 --root "${ROOTFS}" \
             --repository "${ALPINE_MAIN}" \
             --repository "${ALPINE_COMMUNITY}" \
-            add --no-scripts "${pkg}"
+            add "${pkg}"
     done
+}
 
-    # Update package index in rootfs
-    /tmp/apk.static --arch "${ALPINE_ARCH}" --root "${ROOTFS}" \
-        --cache-dir "${ROOTFS}/var/cache/apk" upgrade --no-scripts 2>/dev/null || true
+build_rootfs() {
+    if command -v docker &>/dev/null; then
+        log "[bootstrap] Using Docker for rootfs bootstrap (aarch64)"
+        build_rootfs_docker
+    else
+        log "[bootstrap] Docker not found; using apk-tools-static"
+        build_rootfs_apk
+    fi
 
     # Clean apk cache
-    rm -rf "${ROOTFS}/var/cache/apk"/*
+    rm -rf "${ROOTFS}/var/cache/apk"/* 2>/dev/null || true
 }
 
 # ---- STEP 4: Configure rootfs -------------------------------
 configure_rootfs() {
-    log "[4/9] Configuring Alpine rootfs..."
+    log "[cfg] Configuring Alpine rootfs..."
+
+    # --- apk repositories ---
+    mkdir -p "${ROOTFS}/etc/apk"
+    cat > "${ROOTFS}/etc/apk/repositories" <<-REPOS
+${ALPINE_MAIN}
+${ALPINE_COMMUNITY}
+REPOS
 
     # --- hostname ---
     echo "alpine-raphael" > "${ROOTFS}/etc/hostname"
@@ -296,7 +318,7 @@ EOF
 
 # ---- STEP 5: Download and extract kernel --------------------
 download_kernel() {
-    log "[5/9] Downloading kernel packages (v${KERNEL_VERSION})..."
+    log "[dl] Downloading kernel packages (v${KERNEL_VERSION})..."
 
     curl -fsSL -o "${WORKDIR}/linux-image-xiaomi-raphael.deb" "${KERNEL_IMAGE_DEB}"
     log "    ✓ linux-image-xiaomi-raphael.deb"
@@ -308,7 +330,7 @@ download_kernel() {
 }
 
 extract_kernel() {
-    log "[6/9] Extracting kernel + modules..."
+    log "[kernel] Extracting kernel + modules..."
 
     mkdir -p "${WORKDIR}/kernel-extract"
     (
@@ -391,7 +413,7 @@ extract_kernel() {
 
 # ---- STEP 7: Create squashfs of Alpine rootfs ---------------
 create_squashfs() {
-    log "[7/9] Creating squashfs of Alpine rootfs..."
+    log "[squashfs] Creating squashfs of Alpine rootfs..."
 
     if ! command -v mksquashfs &>/dev/null; then
         log "[!] mksquashfs not found. Installing squashfs-tools..."
@@ -412,7 +434,7 @@ create_squashfs() {
 
 # ---- STEP 8: Build initramfs --------------------------------
 build_initramfs() {
-    log "[8/9] Building initramfs..."
+    log "[initramfs] Building initramfs..."
 
     rm -rf "${INITRAMFS_DIR}"
     mkdir -p "${INITRAMFS_DIR}/bin"
@@ -485,7 +507,7 @@ create_bootimg() {
 
 # ---- STEP 9: Verify and print summary -----------------------
 verify_output() {
-    log "[9/9] Verifying output..."
+    log "[verify] Verifying output..."
 
     echo ""
     echo "============================================"
