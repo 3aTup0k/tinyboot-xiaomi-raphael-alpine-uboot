@@ -15,9 +15,8 @@ echo "[$(date +'%Y-%m-%d %H:%M:%S')] [06] 📦 Installing packages"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# CRITICAL: Remove ALL potentially conflicting coreutils packages
-echo "[$(date +'%Y-%m-%d %H:%M:%S')] [06]   └─ Removing conflicting coreutils packages..."
-chroot rootdir dpkg --purge --force-all coreutils-from-uutils gnu-coreutils 2>/dev/null || true
+# We do NOT purge coreutils here because dpkg needs 'rm' to function.
+# Instead, we rely on --force-overwrite to resolve file conflicts.
 
 ALL_PACKAGES=$(get_packages "$SYSTEM_TYPE" "$DESKTOP_ENV")
 DEVICE_PACKAGES="rmtfs protection-domain-mapper tqftpserv"
@@ -25,8 +24,16 @@ DEVICE_PACKAGES="rmtfs protection-domain-mapper tqftpserv"
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] [06]   └─ Base and Device packages: $(echo "$ALL_PACKAGES $DEVICE_PACKAGES" | tr ' ' ', ')"
 
 echo "[$(date +'%Y-%m-%d %H:%M:%S')] [06]   └─ Starting installation (this may take a few minutes...)"
-# Fix broken dependencies first
-chroot rootdir apt-get install -f -y
+
+# Ensure PATH is correct inside chroot to avoid 'rm not found' errors
+chroot rootdir /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin apt-get install -f -y
+
+# Force install main packages, overwriting any conflicting files from uutils/gnu-coreutils
+chroot rootdir /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin apt-get install -y -o Dpkg::Options::="--force-overwrite" $ALL_PACKAGES $DEVICE_PACKAGES
+
+# Final fix for any remaining dependency issues
+chroot rootdir /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin apt-get install -f -y
+
 
 # Force install main packages, overwriting any conflicting files
 chroot rootdir apt-get install -y -o Dpkg::Options::="--force-overwrite" $ALL_PACKAGES $DEVICE_PACKAGES
