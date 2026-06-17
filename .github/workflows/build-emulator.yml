@@ -8,6 +8,9 @@ on:
     paths:
       - 'scripts/00-download-emulator.sh' # Trigger if assets paths change
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
