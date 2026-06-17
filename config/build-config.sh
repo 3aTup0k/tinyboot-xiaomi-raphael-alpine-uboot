@@ -8,7 +8,7 @@ system_config() {
   case "$1" in
     "tinyfs-iphoneos")
       echo "DEBIAN_VERSION=${DEBIAN_VERSION:-trixie}"
-      echo "IMAGE_SIZE=100M"
+      echo "IMAGE_SIZE=1G"
       echo "IS_DESKTOP=false"
       echo "DESKTOP_ENV="
       ;;
