@@ -25,8 +25,9 @@ mkdir build && cd build
     --disable-cocoa \
     --disable-capstone \
     --disable-slirp \
-    --disable-pie \
-    --disable-werror
+    --disable-guest-agent \
+    --disable-werror \
+    --extra-cflags="-fPIC"
 
 make -j$(nproc)
 
