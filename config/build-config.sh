@@ -1,0 +1,37 @@
+# System type configuration
+SYSTEM_TYPES="
+  tinyfs-iphoneos
+"
+
+# Mapping from system type to base settings
+system_config() {
+  case "$1" in
+    "tinyfs-iphoneos")
+      echo "DEBIAN_VERSION=${DEBIAN_VERSION:-trixie}"
+      echo "IMAGE_SIZE=100M"
+      echo "IS_DESKTOP=false"
+      echo "DESKTOP_ENV="
+      ;;
+  esac
+}
+
+# Mirror configuration
+sources_config() {
+  if [[ "$1" == *"tinyfs-iphoneos"* ]]; then
+    local version="${DEBIAN_VERSION:-trixie}"
+    echo "DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian/"
+    echo "DEBIAN_SECURITY_MIRROR=http://security.debian.org/debian-security"
+  fi
+}
+
+# Package configuration
+get_packages() {
+  local system_type="$1"
+  local desktop_env="$2"
+
+  if [[ "$system_type" == "tinyfs-iphoneos" ]]; then
+    echo "bash coreutils iproute2 netbase net-tools wget nano apt kmod sysvinit-utils openrc"
+  else
+    echo "bash coreutils"
+  fi
+}
