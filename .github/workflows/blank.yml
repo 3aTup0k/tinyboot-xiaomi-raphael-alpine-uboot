@@ -132,9 +132,9 @@ jobs:
             IFS=',' read -ra DEB_ARRAY <<< "$DEB_VERS"
             IFS=',' read -ra UBU_ARRAY <<< "$UBU_VERS"
             
-            # Generate Debian combinations
+            # Generate Debian and TinyFS combinations
             for sys in "${SYS_ARRAY[@]}"; do
-              if [[ "$sys" == debian-* || "$sys" == "tinyfs" ]]; then
+              if [[ "$sys" == debian-* || "$sys" == tinyfs* ]]; then
                 for kern in "${KERN_ARRAY[@]}"; do
                   for tool in "${TOOL_ARRAY[@]}"; do
                     for deb_ver in "${DEB_ARRAY[@]}"; do
