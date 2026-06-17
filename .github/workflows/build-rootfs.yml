@@ -1,4 +1,4 @@
-name: Build System Image
+name: Build RootFS Image
 
 on:
   workflow_dispatch:
