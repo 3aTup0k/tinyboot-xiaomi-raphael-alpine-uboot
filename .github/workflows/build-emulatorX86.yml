@@ -52,7 +52,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-qemu-X86
-          name: QEMU X86 Binary
+          name: QEMU-IOS ARM Binary for X86 arch
           files: build_artifacts/qemu-system-arm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
