@@ -27,7 +27,8 @@ mkdir build && cd build
     --disable-slirp \
     --disable-guest-agent \
     --disable-werror \
-    --extra-cflags="-fPIC"
+    --extra-cflags="-fPIC" \
+    --extra-ldflags="-lcrypto"
 
 make -j$(nproc)
 
